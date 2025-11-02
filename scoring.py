@@ -1,7 +1,7 @@
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup, Comment
-import pandas as pd
+import sys
 
 def parse_minute(time_str):
     if '+' in time_str:
@@ -548,7 +548,11 @@ def calc_all_players (link):
     
     
     return stacked_df
-
-
     
-
+    if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        url = sys.argv[1]
+        output = "match_output.csv" if len(sys.argv) < 3 else sys.argv[2]
+        df = calculate_scores(url)  # existing function already in the file
+        df.to_csv(output, index=False)
+        print(f"✅ Saved results for {url} → {output}")
