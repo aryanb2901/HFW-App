@@ -1,48 +1,58 @@
 import streamlit as st
 import pandas as pd
-from scoring import calc_all_players  
+from scoring import calc_all_players
 
-st.set_page_config(page_title="Fantasy Soccer Scoring", layout="wide")
-st.title("⚽ HFW Soccer Scoring App (Multi-Link Version)")
+st.set_page_config(page_title="⚽ Fantasy Soccer Scoring", layout="wide")
 
-st.markdown("""
-Paste multiple **FBref match links** (one per line) below.
-The app will calculate scores for each match, then combine them all into one CSV for download.
-""")
+st.title("🏆 HFW Soccer Scoring App (Multi-Match Version)")
 
-# Multi-link input box
-links_input = st.text_area("Enter one FBref match link per line:")
+# --- Step 1: user chooses number of matches ---
+num_matches = st.number_input(
+    "How many matches are in this gameweek?", 
+    min_value=1, 
+    max_value=10, 
+    value=1, 
+    step=1
+)
 
-if st.button("Calculate Combined Scores"):
-    links = [l.strip() for l in links_input.splitlines() if l.strip()]
-    if not links:
-        st.warning("Please enter at least one valid FBref link.")
+# --- Step 2: dynamically generate input boxes ---
+match_links = []
+for i in range(num_matches):
+    link = st.text_input(f"Match {i+1} FBref link:", key=f"match_link_{i}")
+    if link:
+        match_links.append(link.strip())
+
+# --- Step 3: Calculate scores when user clicks button ---
+if st.button("⚙️ Calculate Scores"):
+    if not match_links:
+        st.warning("Please enter at least one valid FBref match link.")
     else:
         all_results = []
-        st.info(f"Processing {len(links)} links...")
-
-        for i, link in enumerate(links, start=1):
+        for link in match_links:
+            st.write(f"Processing: {link}")
             try:
-                st.write(f"⚙️ Processing match {i}/{len(links)}:")
-                results_df = calc_all_players(link)
-                results_df["Match Link"] = link  # track which match each player is from
-                all_results.append(results_df)
-                st.success(f"✅ Done for match {i}")
+                df = calc_all_players(link)
+                if df is not None:
+                    all_results.append(df)
+                    st.success(f"✅ Processed {link}")
+                else:
+                    st.warning(f"⚠️ Skipped {link} (no valid data found)")
             except Exception as e:
                 st.error(f"❌ Error processing {link}: {e}")
 
         if all_results:
-            combined_df = pd.concat(all_results, ignore_index=True)
-            combined_df = combined_df.sort_values("score", ascending=False).reset_index(drop=True)
+            combined = pd.concat(all_results, ignore_index=True)
+            combined = combined.sort_values("score", ascending=False).reset_index(drop=True)
 
-            st.success("🎉 Combined scores calculated successfully!")
-            st.dataframe(combined_df, use_container_width=True)
+            st.success("🎯 Combined scores generated successfully!")
+            st.dataframe(combined, use_container_width=True)
 
-            # Download combined CSV
-            csv = combined_df.to_csv(index=False).encode("utf-8")
+            csv = combined.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="📥 Download Combined Matchweek CSV",
+                label="📥 Download Combined Scores (CSV)",
                 data=csv,
-                file_name="Combined_Matchweek.csv",
+                file_name="combined_gameweek_scores.csv",
                 mime="text/csv",
             )
+        else:
+            st.warning("No valid match data found to combine.")
