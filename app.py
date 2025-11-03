@@ -1,45 +1,48 @@
 import streamlit as st
 import pandas as pd
-import requests
 from scoring import calc_all_players  
 
 st.set_page_config(page_title="Fantasy Soccer Scoring", layout="wide")
+st.title("⚽ HFW Soccer Scoring App (Multi-Link Version)")
 
-st.title("⚽ HFW Soccer Scoring App")
+st.markdown("""
+Paste multiple **FBref match links** (one per line) below.
+The app will calculate scores for each match, then combine them all into one CSV for download.
+""")
 
-link = st.text_input("Enter FBREF match link:")
+# Multi-link input box
+links_input = st.text_area("Enter one FBref match link per line:")
 
-if st.button("Calculate Scores"):
-    if link:
-        try:
-            # Run your function
-            results_df = calc_all_players(link)
+if st.button("Calculate Combined Scores"):
+    links = [l.strip() for l in links_input.splitlines() if l.strip()]
+    if not links:
+        st.warning("Please enter at least one valid FBref link.")
+    else:
+        all_results = []
+        st.info(f"Processing {len(links)} links...")
 
-            st.success("Scores calculated successfully ✅")
+        for i, link in enumerate(links, start=1):
+            try:
+                st.write(f"⚙️ Processing match {i}/{len(links)}:")
+                results_df = calc_all_players(link)
+                results_df["Match Link"] = link  # track which match each player is from
+                all_results.append(results_df)
+                st.success(f"✅ Done for match {i}")
+            except Exception as e:
+                st.error(f"❌ Error processing {link}: {e}")
 
-            # Show table
-            st.dataframe(
-                results_df.sort_values("score", ascending=False).reset_index(drop=True),
-                use_container_width=True
-            )
+        if all_results:
+            combined_df = pd.concat(all_results, ignore_index=True)
+            combined_df = combined_df.sort_values("score", ascending=False).reset_index(drop=True)
 
-            # Extra: show top performers
-            st.subheader("Top 5 Performers")
-            top5 = results_df.sort_values("score", ascending=False).head(5)
-            st.table(top5)
+            st.success("🎉 Combined scores calculated successfully!")
+            st.dataframe(combined_df, use_container_width=True)
 
-            # Download button
-            csv = results_df.to_csv(index=False).encode("utf-8")
+            # Download combined CSV
+            csv = combined_df.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="📥 Download Full Scores as CSV",
+                label="📥 Download Combined Matchweek CSV",
                 data=csv,
-                file_name="fantasy_scores.csv",
+                file_name="Combined_Matchweek.csv",
                 mime="text/csv",
             )
-
-        except Exception as e:
-            st.error(f"Something went wrong: {e}")
-    else:
-        st.warning("Please enter a valid link.")
-
-
