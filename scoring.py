@@ -427,20 +427,25 @@ def calc_all_players (link):
     # Define headers with a User-Agent
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                  'AppleWebKit/537.36 (KHTML, like Gecko) '
-                  'Chrome/91.0.4472.124 Safari/537.36'
+                      'AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/91.0.4472.124 Safari/537.36'
     }
 
-# Make the HTTP request with headers
-    response = requests.get(link, headers=headers)
+    try:
+        # Make the HTTP request with headers
+        response = requests.get(link, headers=headers, timeout=30)
+        if response.status_code != 200:
+            print(f"❌ Failed to retrieve the page. Status code: {response.status_code}")
+            return None
 
-# Check if the request was successful
-    if response.status_code == 200:
-    # Use pd.read_html on the response content
+        # Parse tables safely
         url = pd.read_html(response.text)
-    # Now dfs is a list of DataFrames extracted from the page
-    else:
-        print(f"Failed to retrieve the page. Status code: {response.status_code}")
+        if not url or len(url) < 16:
+            print(f"⚠️ Incomplete or malformed data tables for {link}. Found {len(url) if url else 0} tables.")
+            return None
+    except Exception as e:
+        print(f"❌ Exception fetching or parsing {link}: {e}")
+        return None
         
     cols_to_keep_summary = ['Unnamed: 0_level_0_Player','Unnamed: 5_level_0_Min', 'Performance_Gls',
     'Performance_Ast', 'Performance_PK', 'Performance_PKatt',
