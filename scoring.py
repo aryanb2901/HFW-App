@@ -1,3 +1,4 @@
+import streamlit as st
 import pandas as pd
 from bs4 import BeautifulSoup
 
@@ -85,7 +86,6 @@ def parse_team_tables_from_html(html_content):
     soup = BeautifulSoup(html_content, "html.parser")
     tables = soup.find_all("table")
 
-    # Find tables with caption like "Player Stats Table"
     team_tables = []
     for table in tables:
         caption = table.find("caption")
@@ -100,9 +100,25 @@ def parse_team_tables_from_html(html_content):
         df_home, df_away = dataframes[0], pd.DataFrame()
     else:
         df_home, df_away = dataframes[0], dataframes[1]
+
+    st.write("✅ Found", len(dataframes), "team tables in HTML.")
     return df_home, df_away
 
-# ------------------- MAIN CALC FUNCTION -------------------
+
+def normalize_columns(df, label=""):
+    """Flatten multi-index columns and make them easier to match."""
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [
+            "_".join([str(x) for x in col if str(x) != "nan"]).strip("_")
+            for col in df.columns
+        ]
+    else:
+        df.columns = [str(c) for c in df.columns]
+
+    df.columns = [c.replace("Unnamed: 0_level_0_", "").replace("Unnamed: ", "").strip() for c in df.columns]
+    st.write(f"📊 Columns in {label} table after normalization:", df.columns.tolist())
+    return df
+
 
 def calc_all_players_from_html(html_content):
     """Parse HTML and calculate fantasy scores for all players."""
@@ -111,9 +127,29 @@ def calc_all_players_from_html(html_content):
     def process_df(df, team_type):
         if df.empty:
             return pd.DataFrame()
-        df = df.rename(columns=lambda x: str(x).strip())
-        if "Player" not in df.columns:
-            raise ValueError("Could not find 'Player' column in uploaded HTML.")
+        df = normalize_columns(df, team_type)
+
+        # Identify 'Player' column
+        player_col = next((c for c in df.columns if "player" in c.lower()), None)
+        if not player_col:
+            st.error(f"❌ Could not find 'Player' column in {team_type} table. Columns: {df.columns.tolist()}")
+            raise ValueError("Could not find 'Player' column after normalization.")
+
+        df = df.rename(columns={player_col: "Player"})
+
+        # Identify 'Pos' column
+        if "Pos" not in df.columns:
+            pos_col = next((c for c in df.columns if "pos" in c.lower()), None)
+            if pos_col:
+                df = df.rename(columns={pos_col: "Pos"})
+            else:
+                st.warning(f"⚠️ No 'Pos' column found in {team_type} table. Defaulting all to MID.")
+                df["Pos"] = "MID"
+
+        st.write(f"🧩 Sample data for {team_type} team:")
+        st.write(df.head())
+
+        # Apply fantasy scoring
         df["Team"] = team_type
         df["pos"] = df["Pos"].apply(position_calcul)
         df["score"] = df.apply(
@@ -126,10 +162,13 @@ def calc_all_players_from_html(html_content):
             ),
             axis=1,
         )
+
         return df[["Player", "Team", "pos", "score"]]
 
     df_home_scored = process_df(df_home, "Home")
     df_away_scored = process_df(df_away, "Away")
 
     combined = pd.concat([df_home_scored, df_away_scored], ignore_index=True)
+    st.write("✅ Combined data preview:")
+    st.write(combined.head())
     return combined
