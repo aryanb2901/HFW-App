@@ -1,6 +1,43 @@
 import streamlit as st
 import pandas as pd
 from scoring import calc_all_players
+import requests
+from bs4 import BeautifulSoup
+
+st.title("FBref Diagnostic Test")
+
+test_url = st.text_input("Enter an FBref match link to test:", 
+                         "https://fbref.com/en/matches/a071faa8/Liverpool-Bournemouth-August-15-2025-Premier-League")
+
+if st.button("Run Diagnostic Test"):
+    headers_list = [
+        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36"},
+        {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Firefox/120.0"},
+        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0"},
+    ]
+
+    for i, headers in enumerate(headers_list, 1):
+        st.markdown(f"### Attempt {i}")
+        try:
+            r = requests.get(test_url, headers=headers, timeout=15)
+            st.write("Status:", r.status_code)
+
+            if r.status_code != 200:
+                st.warning("⚠️ Non-200 response. First 300 characters of body:")
+                st.code(r.text[:300])
+                continue
+
+            soup = BeautifulSoup(r.text, "html.parser")
+            title = soup.title.string if soup.title else "(no title)"
+            num_tables = len(soup.find_all("table"))
+            num_comments = len(soup.find_all(string=lambda x: isinstance(x, type(soup.comment))))
+            
+            st.success(f"✅ Page title: {title}")
+            st.write("Contains table tags:", num_tables)
+            st.write("Contains HTML comments:", num_comments)
+
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
 
 st.set_page_config(page_title="⚽ Fantasy Soccer Scoring", layout="wide")
 
