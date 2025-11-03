@@ -1,95 +1,41 @@
 import streamlit as st
 import pandas as pd
-from scoring import calc_all_players
-import requests
-from bs4 import BeautifulSoup
+from scoring import calc_all_players_from_html
 
-st.title("FBref Diagnostic Test")
+st.set_page_config(page_title="HFW Soccer Scoring App (HTML Upload)", layout="wide")
 
-test_url = st.text_input("Enter an FBref match link to test:", 
-                         "https://fbref.com/en/matches/a071faa8/Liverpool-Bournemouth-August-15-2025-Premier-League")
+st.title("⚽ HFW Soccer Scoring App (Upload Match HTML)")
 
-if st.button("Run Diagnostic Test"):
-    headers_list = [
-        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36"},
-        {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Firefox/120.0"},
-        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0"},
-    ]
+uploaded_html = st.file_uploader("Upload FBref Match HTML file", type=["html"])
 
-    for i, headers in enumerate(headers_list, 1):
-        st.markdown(f"### Attempt {i}")
-        try:
-            r = requests.get(test_url, headers=headers, timeout=15)
-            st.write("Status:", r.status_code)
+if uploaded_html is not None:
+    try:
+        html_content = uploaded_html.read().decode("utf-8")
+        results_df = calc_all_players_from_html(html_content)
 
-            if r.status_code != 200:
-                st.warning("⚠️ Non-200 response. First 300 characters of body:")
-                st.code(r.text[:300])
-                continue
+        if not results_df.empty:
+            st.success("Scores calculated successfully ✅")
 
-            soup = BeautifulSoup(r.text, "html.parser")
-            title = soup.title.string if soup.title else "(no title)"
-            num_tables = len(soup.find_all("table"))
-            num_comments = len(soup.find_all(string=lambda x: isinstance(x, type(soup.comment))))
-            
-            st.success(f"✅ Page title: {title}")
-            st.write("Contains table tags:", num_tables)
-            st.write("Contains HTML comments:", num_comments)
+            st.dataframe(
+                results_df.sort_values("score", ascending=False).reset_index(drop=True),
+                use_container_width=True
+            )
 
-        except Exception as e:
-            st.error(f"❌ Error: {e}")
+            top5 = results_df.sort_values("score", ascending=False).head(5)
+            st.subheader("Top 5 Performers")
+            st.table(top5)
 
-st.set_page_config(page_title="⚽ Fantasy Soccer Scoring", layout="wide")
-
-st.title("🏆 HFW Soccer Scoring App (Multi-Match Version)")
-
-# --- Step 1: user chooses number of matches ---
-num_matches = st.number_input(
-    "How many matches are in this gameweek?", 
-    min_value=1, 
-    max_value=10, 
-    value=1, 
-    step=1
-)
-
-# --- Step 2: dynamically generate input boxes ---
-match_links = []
-for i in range(num_matches):
-    link = st.text_input(f"Match {i+1} FBref link:", key=f"match_link_{i}")
-    if link:
-        match_links.append(link.strip())
-
-# --- Step 3: Calculate scores when user clicks button ---
-if st.button("⚙️ Calculate Scores"):
-    if not match_links:
-        st.warning("Please enter at least one valid FBref match link.")
-    else:
-        all_results = []
-        for link in match_links:
-            st.write(f"Processing: {link}")
-            try:
-                df = calc_all_players(link)
-                if df is not None:
-                    all_results.append(df)
-                    st.success(f"✅ Processed {link}")
-                else:
-                    st.warning(f"⚠️ Skipped {link} (no valid data found)")
-            except Exception as e:
-                st.error(f"❌ Error processing {link}: {e}")
-
-        if all_results:
-            combined = pd.concat(all_results, ignore_index=True)
-            combined = combined.sort_values("score", ascending=False).reset_index(drop=True)
-
-            st.success("🎯 Combined scores generated successfully!")
-            st.dataframe(combined, use_container_width=True)
-
-            csv = combined.to_csv(index=False).encode("utf-8")
+            csv = results_df.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="📥 Download Combined Scores (CSV)",
+                label="📥 Download Full Scores as CSV",
                 data=csv,
-                file_name="combined_gameweek_scores.csv",
+                file_name="fantasy_scores.csv",
                 mime="text/csv",
             )
         else:
-            st.warning("No valid match data found to combine.")
+            st.warning("No player data found in this file. Please ensure it's a full FBref match report.")
+
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
+else:
+    st.info("Upload a single FBref match HTML file to begin.")
