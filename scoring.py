@@ -549,11 +549,11 @@ def calc_all_players (link):
     
     return stacked_df
     
-   if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        url = sys.argv[1]
-        output = "match_output.csv" if len(sys.argv) < 3 else sys.argv[2]
-        df = calc_all_players(url)  # use your existing function name
-        df.to_csv(output, index=False)
-        print(f"✅ Saved results for {url} → {output}")
+    if __name__ == "__main__":
+       if len(sys.argv) > 1:
+           url = sys.argv[1]
+           output = "match_output.csv" if len(sys.argv) < 3 else sys.argv[2]
+           df = calc_all_players(url)  # use your existing function name
+           df.to_csv(output, index=False)
+           print(f"✅ Saved results for {url} → {output}")
 
