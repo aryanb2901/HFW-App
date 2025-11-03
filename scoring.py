@@ -5,11 +5,17 @@ from bs4 import BeautifulSoup
 # ------------------- HELPERS -------------------
 
 def position_calcul(pos):
-    """Simplify position codes."""
+    """Normalize position strings safely."""
+    if pd.isna(pos):
+        return "MID"  # default if missing
+
+    pos = str(pos).strip()  # ensure it's a string
+
     if len(pos) > 2:
-        final_pos = pos.split(",")[0]
+        final_pos = pos.split(",")[0].strip()
     else:
         final_pos = pos
+
     if final_pos.endswith("W"):
         return "FWD"
     elif final_pos.endswith("M"):
@@ -17,7 +23,7 @@ def position_calcul(pos):
     elif final_pos.endswith("B"):
         return "DEF"
     else:
-        return "UNK"
+        return "UNK"  # fallback
 
 # ------------------- SCORING FUNCTIONS -------------------
 
