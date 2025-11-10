@@ -60,7 +60,7 @@ if st.button("Calculate Scores"):
             st.dataframe(combined_display, use_container_width=True)
 
             # Download combined CSV
-            csv = combined_display.to_csv(index=False).encode("utf-8")
+            csv = combined_display.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 label="📥 Download Combined Scores as CSV",
                 data=csv,
