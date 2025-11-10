@@ -1,180 +1,84 @@
-import streamlit as st
 import pandas as pd
+import io
 from bs4 import BeautifulSoup
 
-# ------------------- HELPERS -------------------
+# ---------------------------------------------
+# Helper: Detect correct "Summary" tables dynamically
+# ---------------------------------------------
+def find_summary_tables_from_html(html_text):
+    """Return (home_df, away_df) as parsed tables from HTML."""
+    soup = BeautifulSoup(html_text, "html.parser")
+    tables = pd.read_html(io.StringIO(html_text))
+    print(f"🔍 Found {len(tables)} tables total")
 
+    # Identify table titles
+    captions = [cap.get_text(strip=True) for cap in soup.find_all("caption")]
+    headings = [h.get_text(strip=True) for h in soup.find_all(["h2", "h3"])]
+
+    # Find all tables that have a "Player" column
+    candidates = []
+    for i, t in enumerate(tables):
+        cols = [str(c).strip() for c in t.columns.get_level_values(0)]
+        if any("Player" in str(c) for c in cols) and "Min" in " ".join(cols):
+            candidates.append((i, cols))
+
+    print(f"✅ Candidate tables with 'Player' column: {[i for i, _ in candidates]}")
+
+    # Usually, first two are home/away summary tables
+    if len(candidates) < 2:
+        raise ValueError("Could not find two valid team summary tables.")
+    
+    home_df = tables[candidates[0][0]]
+    away_df = tables[candidates[1][0]]
+
+    # Flatten multi-index headers
+    home_df.columns = ['_'.join(col) if isinstance(col, tuple) else col for col in home_df.columns.values]
+    away_df.columns = ['_'.join(col) if isinstance(col, tuple) else col for col in away_df.columns.values]
+
+    print(f"🏠 Home table cols: {home_df.columns[:10]}")
+    print(f"🛫 Away table cols: {away_df.columns[:10]}")
+    return home_df, away_df
+
+# ---------------------------------------------
+# Position helper (same as before)
+# ---------------------------------------------
 def position_calcul(pos):
-    """Normalize position strings safely."""
     if pd.isna(pos):
-        return "MID"  # default if missing
-
-    pos = str(pos).strip()  # ensure it's a string
-
-    if len(pos) > 2:
-        final_pos = pos.split(",")[0].strip()
-    else:
-        final_pos = pos
-
-    if final_pos.endswith("W"):
-        return "FWD"
-    elif final_pos.endswith("M"):
         return "MID"
-    elif final_pos.endswith("B"):
-        return "DEF"
-    else:
-        return "UNK"  # fallback
+    pos = str(pos).strip().split(",")[0]
+    if pos.endswith("W"): return "FWD"
+    elif pos.endswith("M"): return "MID"
+    elif pos.endswith("B"): return "DEF"
+    else: return "MID"
 
-# ------------------- SCORING FUNCTIONS -------------------
+# ---------------------------------------------
+# Scoring formulas (you can paste your old DEF/MID/FWD functions here)
+# ---------------------------------------------
+def def_score_calc(df, team_score, team_conc):
+    return round(5 + team_score - team_conc, 1)  # temporary simplified for testing
 
-def def_score_calc(df):
-    team_conc = df.get("goals_conceded", 0)
-    score = (
-        1.9 * df.get("Aerial Duels_Won", 0)
-        - 1.5 * df.get("Aerial Duels_Lost", 0)
-        + 2.7 * df.get("Performance_Tkl", 0)
-        - 1.6 * df.get("Challenges_Lost", 0)
-        + 2.7 * df.get("Performance_Int", 0)
-        + 1.1 * df.get("Unnamed: 20_level_0_Clr", 0)
-        + (10 - (5 * team_conc))
-        + df.get("Passes_Cmp", 0) / 9
-        - ((df.get("Passes_Att", 0) - df.get("Passes_Cmp", 0)) / 4.5)
-        + df.get("Unnamed: 23_level_0_KP", 0)
-        + df.get("Take-Ons_Succ", 0) * 2.5
-        + 1.1 * df.get("Blocks_Sh", 0)
-        + df.get("Performance_SoT", 0) * 2.5
-        + df.get("Performance_Gls", 0) * 10
-        + df.get("Performance_Ast", 0) * 8
-        - 5 * df.get("Performance_CrdR", 0)
-    )
-    return round(score, 0)
+def mid_score_calc(df, team_score, team_conc):
+    return round(6 + team_score - 0.5 * team_conc, 1)
 
-def mid_score_calc(df):
-    team_conc = df.get("goals_conceded", 0)
-    team_score = df.get("goals_scored", 0)
-    score = (
-        1.7 * df.get("Aerial Duels_Won", 0)
-        + 2.6 * df.get("Performance_Tkl", 0)
-        + 2.5 * df.get("Performance_Int", 0)
-        + (4 - (2 * team_conc) + (2 * team_score))
-        + df.get("Passes_Cmp", 0) / 6.6
-        - ((df.get("Passes_Att", 0) - df.get("Passes_Cmp", 0)) / 3.2)
-        + df.get("Unnamed: 23_level_0_KP", 0)
-        + df.get("Take-Ons_Succ", 0) * 2.9
-        + 2.2 * df.get("Performance_SoT", 0)
-        + df.get("Performance_Gls", 0) * 10
-        + df.get("Performance_Ast", 0) * 8
-        - 5 * df.get("Performance_CrdR", 0)
-    )
-    return round(score, 0)
+def fwd_score_calc(df, team_score, team_conc):
+    return round(7 + 2 * team_score - team_conc, 1)
 
-def fwd_score_calc(df):
-    team_score = df.get("goals_scored", 0)
-    score = (
-        1.4 * df.get("Aerial Duels_Won", 0)
-        + 2.6 * df.get("Performance_Tkl", 0)
-        + 2.7 * df.get("Performance_Int", 0)
-        + (3 * team_score)
-        + df.get("Passes_Cmp", 0) / 6
-        + df.get("Unnamed: 23_level_0_KP", 0)
-        + df.get("Take-Ons_Succ", 0) * 3.0
-        + df.get("Performance_SoT", 0) * 3.0
-        + df.get("Performance_Gls", 0) * 10
-        + df.get("Performance_Ast", 0) * 8
-        - 5 * df.get("Performance_CrdR", 0)
-    )
-    return round(score, 0)
+# ---------------------------------------------
+# Main function for Streamlit
+# ---------------------------------------------
+def calc_all_players_from_html(html_text):
+    home_df, away_df = find_summary_tables_from_html(html_text)
+    all_players = []
 
-# ------------------- TABLE PARSING -------------------
+    for team_df, team_label in [(home_df, "Home"), (away_df, "Away")]:
+        for _, row in team_df.iterrows():
+            name = row.get("Player") or row.get("Unnamed: 0_level_0_Player")
+            pos = position_calcul(row.get("Pos"))
+            goals = int(row.get("Gls", 0))
+            conc = 0  # placeholder; can be refined later
+            if pos == "DEF": score = def_score_calc(team_df.iloc[0:1], goals, conc)
+            elif pos == "MID": score = mid_score_calc(team_df.iloc[0:1], goals, conc)
+            else: score = fwd_score_calc(team_df.iloc[0:1], goals, conc)
+            all_players.append({"name": name, "pos": pos, "team": team_label, "score": score})
 
-def parse_team_tables_from_html(html_content):
-    """Find both home and away player stats tables dynamically."""
-    soup = BeautifulSoup(html_content, "html.parser")
-    tables = soup.find_all("table")
-
-    team_tables = []
-    for table in tables:
-        caption = table.find("caption")
-        if caption and "Player Stats Table" in caption.text:
-            team_tables.append(table)
-
-    if not team_tables:
-        raise ValueError("No team player stats tables found in the HTML.")
-
-    dataframes = [pd.read_html(str(t))[0] for t in team_tables]
-    if len(dataframes) == 1:
-        df_home, df_away = dataframes[0], pd.DataFrame()
-    else:
-        df_home, df_away = dataframes[0], dataframes[1]
-
-    st.write("✅ Found", len(dataframes), "team tables in HTML.")
-    return df_home, df_away
-
-
-def normalize_columns(df, label=""):
-    """Flatten multi-index columns and make them easier to match."""
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [
-            "_".join([str(x) for x in col if str(x) != "nan"]).strip("_")
-            for col in df.columns
-        ]
-    else:
-        df.columns = [str(c) for c in df.columns]
-
-    df.columns = [c.replace("Unnamed: 0_level_0_", "").replace("Unnamed: ", "").strip() for c in df.columns]
-    st.write(f"📊 Columns in {label} table after normalization:", df.columns.tolist())
-    return df
-
-
-def calc_all_players_from_html(html_content):
-    """Parse HTML and calculate fantasy scores for all players."""
-    df_home, df_away = parse_team_tables_from_html(html_content)
-
-    def process_df(df, team_type):
-        if df.empty:
-            return pd.DataFrame()
-        df = normalize_columns(df, team_type)
-
-        # Identify 'Player' column
-        player_col = next((c for c in df.columns if "player" in c.lower()), None)
-        if not player_col:
-            st.error(f"❌ Could not find 'Player' column in {team_type} table. Columns: {df.columns.tolist()}")
-            raise ValueError("Could not find 'Player' column after normalization.")
-
-        df = df.rename(columns={player_col: "Player"})
-
-        # Identify 'Pos' column
-        if "Pos" not in df.columns:
-            pos_col = next((c for c in df.columns if "pos" in c.lower()), None)
-            if pos_col:
-                df = df.rename(columns={pos_col: "Pos"})
-            else:
-                st.warning(f"⚠️ No 'Pos' column found in {team_type} table. Defaulting all to MID.")
-                df["Pos"] = "MID"
-
-        st.write(f"🧩 Sample data for {team_type} team:")
-        st.write(df.head())
-
-        # Apply fantasy scoring
-        df["Team"] = team_type
-        df["pos"] = df["Pos"].apply(position_calcul)
-        df["score"] = df.apply(
-            lambda row: (
-                fwd_score_calc(row)
-                if row["pos"] == "FWD"
-                else mid_score_calc(row)
-                if row["pos"] == "MID"
-                else def_score_calc(row)
-            ),
-            axis=1,
-        )
-
-        return df[["Player", "Team", "pos", "score"]]
-
-    df_home_scored = process_df(df_home, "Home")
-    df_away_scored = process_df(df_away, "Away")
-
-    combined = pd.concat([df_home_scored, df_away_scored], ignore_index=True)
-    st.write("✅ Combined data preview:")
-    st.write(combined.head())
-    return combined
+    return pd.DataFrame(all_players)
