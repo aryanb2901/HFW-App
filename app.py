@@ -1,34 +1,69 @@
 import streamlit as st
 import pandas as pd
-from scoring import calc_all_players_from_html
+from scoring import calc_all_players_from_html  # uses your existing logic
 
 st.set_page_config(page_title="Fantasy Soccer Scoring", layout="wide")
-st.title("⚽ HFW Soccer Scoring – HTML Upload")
 
-uploaded = st.file_uploader("Upload FBref match HTML file", type=["html", "htm"])
+st.title("⚽ HFW Soccer Scoring App – Multiple Matches")
 
-if uploaded is not None:
-    html = uploaded.read().decode("utf-8", errors="ignore")
+st.markdown(
+    """
+Upload one or more **FBref match report HTML files** (File → Save Page As… in your browser).  
+We'll calculate scores for every match and give you **one combined CSV** of all players.
+"""
+)
 
-    if st.button("Calculate Scores"):
-        try:
-            results_df = calc_all_players_from_html(html)
+# Multi-file uploader: user can pick 1 to N HTML files
+uploaded_files = st.file_uploader(
+    "Upload FBref match HTML files",
+    type=["html", "htm"],
+    accept_multiple_files=True,
+)
 
-            st.success("Scores calculated successfully ✅")
-            st.dataframe(
-                results_df.sort_values("score", ascending=False).reset_index(drop=True),
-                use_container_width=True,
-            )
+if st.button("Calculate Scores"):
+    if not uploaded_files:
+        st.warning("Please upload at least one HTML file.")
+    else:
+        all_results = []
+        for i, f in enumerate(uploaded_files, start=1):
+            try:
+                st.write(f"📄 Processing file {i}: **{f.name}**")
+                # Read file content and decode to text
+                html_bytes = f.read()
+                html_text = html_bytes.decode("utf-8", errors="ignore")
 
-            csv = results_df.to_csv(index=False).encode("utf-8")
+                # Use your existing parser/scorer
+                df_match = calc_all_players_from_html(html_text)
+
+                # Tag with match/source name so you know which game it was
+                df_match["Match"] = f.name
+
+                all_results.append(df_match)
+
+            except Exception as e:
+                st.error(f"❌ Error processing {f.name}: {e}")
+
+        if not all_results:
+            st.error("No valid match data found to combine.")
+        else:
+            combined = pd.concat(all_results, ignore_index=True)
+
+            st.success(f"✅ Calculated scores for {len(all_results)} match(es).")
+
+            # Nice sorted view: by match, then score descending
+            combined_display = combined.sort_values(
+                ["Match", "score"],
+                ascending=[True, False],
+            ).reset_index(drop=True)
+
+            st.subheader("Combined Player Scores")
+            st.dataframe(combined_display, use_container_width=True)
+
+            # Download combined CSV
+            csv = combined_display.to_csv(index=False).encode("utf-8")
             st.download_button(
-                "📥 Download scores as CSV",
+                label="📥 Download Combined Scores as CSV",
                 data=csv,
-                file_name="fantasy_scores.csv",
+                file_name="fantasy_scores_combined.csv",
                 mime="text/csv",
             )
-
-        except Exception as e:
-            st.error(f"Something went wrong: {e}")
-else:
-    st.info("Upload an FBref match-report HTML file to begin.")
