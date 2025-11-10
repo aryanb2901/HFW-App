@@ -321,33 +321,31 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
     for team, dfs in team_tables.items():
         team_frames[team] = _merge_team_tables(dfs)
 
-    if len(team_frames) != 2:
-        # still proceed, but warn logically (you can also raise)
-        # assume first is "Home", second is "Away"
-        teams = list(team_frames.keys())
-    else:
-        teams = list(team_frames.keys())
-
-    if len(teams) == 0:
+    if len(team_frames) == 0:
         raise ValueError("Could not create any team dataframes from HTML.")
 
-    # attach goals_scored / goals_conceded per player
+    teams = list(team_frames.keys())
+
+    # ---- infer goals scored per team from Gls column ----
+    # (we still use this just to keep your original formulas intact)
     if len(teams) >= 1:
         t1 = teams[0]
         df1 = team_frames[t1]
         g1 = _get(df1.sum(numeric_only=True), "Performance_Gls", 0)
+    else:
+        raise ValueError("No first team data found.")
 
     if len(teams) >= 2:
         t2 = teams[1]
         df2 = team_frames[t2]
         g2 = _get(df2.sum(numeric_only=True), "Performance_Gls", 0)
     else:
-        # single-team case (shouldn't happen in a normal match)
+        # single-team case (shouldn't happen for a normal match)
         t2 = None
         df2 = pd.DataFrame()
         g2 = 0
 
-    # set per-team goals
+    # attach goals_scored / goals_conceded and team label
     if len(teams) >= 1:
         team_frames[t1]["goals_scored"] = g1
         team_frames[t1]["goals_conceded"] = g2
@@ -358,16 +356,32 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
         team_frames[t2]["goals_conceded"] = g1
         team_frames[t2]["Team"] = "Away"
 
-    # combine
+    # combine both teams
     combined_full = pd.concat(team_frames.values(), ignore_index=True)
 
-    # ensure Pos exists
+    # ------------------------------------------------------
+    #  Robust detection of the Position column
+    # ------------------------------------------------------
     if "Pos" not in combined_full.columns:
-        combined_full["Pos"] = "MID"
+        # try to find any column whose name suggests "position"
+        pos_candidate = None
+        for c in combined_full.columns:
+            cname = str(c).lower()
+            if "pos" in cname and "xg" not in cname and "pass" not in cname:
+                pos_candidate = c
+                break
 
+        if pos_candidate is not None:
+            combined_full = combined_full.rename(columns={pos_candidate: "Pos"})
+        else:
+            # absolute last resort – no position found at all
+            combined_full["Pos"] = "MID"
+
+    # ------------------------------------------------------
+    #  Now classify into FWD / MID / DEF and compute scores
+    # ------------------------------------------------------
     combined_full["pos"] = combined_full["Pos"].apply(position_calcul)
 
-    # compute scores row-wise
     def _apply_score(row):
         if row["pos"] == "FWD":
             return fwd_score_calc(row)
@@ -378,10 +392,9 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
 
     combined_full["score"] = combined_full.apply(_apply_score, axis=1)
 
-    # this is the table your Streamlit app should display
+    # Slim result for the UI
     result = combined_full[["Player", "Team", "pos", "score"]].copy()
     return result
-
 
 # ----------------------------------------------------------
 # DEBUGGING HELPER – score breakdown for one player
