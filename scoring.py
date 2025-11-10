@@ -375,7 +375,7 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
             combined_full = combined_full.rename(columns={pos_candidate: "Pos"})
         else:
             # absolute last resort – no position found at all
-            combined_full["Pos"] = "MID"
+            combined_full["Pos"] = "UNK"
 
     # ------------------------------------------------------
     #  Now classify into FWD / MID / DEF and compute scores
