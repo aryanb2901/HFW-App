@@ -3,7 +3,7 @@ import pandas as pd
 from scoring import calc_all_players_from_html
 
 st.set_page_config(page_title="Fantasy Soccer Scoring", layout="wide")
-st.title("⚽ HFW Soccer Scoring App (HTML upload)")
+st.title("⚽ HFW Soccer Scoring App (HTML Upload)")
 
 uploaded = st.file_uploader("Upload FBref match HTML", type=["html"])
 
@@ -13,8 +13,8 @@ if st.button("Calculate Scores") and uploaded:
         results_df = calc_all_players_from_html(html_text)
         st.success("Scores calculated successfully ✅")
         st.dataframe(
-            results_df.sort_values("score", ascending=False),
-            use_container_width=True
+            results_df.sort_values("score", ascending=False).reset_index(drop=True),
+            use_container_width=True,
         )
 
         csv = results_df.to_csv(index=False).encode("utf-8")
