@@ -1,16 +1,25 @@
 import streamlit as st
+import pandas as pd
 from scoring import calc_all_players_from_html
 
-st.title("⚽ HFW Soccer Scoring – HTML Auto Table Detection")
-uploaded_html = st.file_uploader("Upload FBref match HTML", type=["html"])
+st.set_page_config(page_title="Fantasy Soccer Scoring", layout="wide")
+st.title("⚽ HFW Soccer Scoring App (HTML upload)")
 
-if uploaded_html:
-    html = uploaded_html.read().decode("utf-8")
+uploaded = st.file_uploader("Upload FBref match HTML", type=["html"])
+
+if st.button("Calculate Scores") and uploaded:
+    html_text = uploaded.read().decode("utf-8")
     try:
-        df = calc_all_players_from_html(html)
-        st.success("✅ Tables detected and scores calculated")
-        st.dataframe(df)
+        results_df = calc_all_players_from_html(html_text)
+        st.success("Scores calculated successfully ✅")
+        st.dataframe(results_df.sort_values("score", ascending=False), use_container_width=True)
+
+        csv = results_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download Full Scores as CSV",
+            data=csv,
+            file_name="fantasy_scores.csv",
+            mime="text/csv",
+        )
     except Exception as e:
-        st.error(f"❌ Error: {e}")
-else:
-    st.info("Upload a saved FBref match HTML file to begin.")
+        st.error(f"Something went wrong: {e}")
