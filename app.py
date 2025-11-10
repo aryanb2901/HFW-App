@@ -12,7 +12,10 @@ if st.button("Calculate Scores") and uploaded:
     try:
         results_df = calc_all_players_from_html(html_text)
         st.success("Scores calculated successfully ✅")
-        st.dataframe(results_df.sort_values("score", ascending=False), use_container_width=True)
+        st.dataframe(
+            results_df.sort_values("score", ascending=False),
+            use_container_width=True
+        )
 
         csv = results_df.to_csv(index=False).encode("utf-8")
         st.download_button(
