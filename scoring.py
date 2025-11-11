@@ -1,7 +1,7 @@
 # scoring.py
 # ==========================================================
 #   FBref match-report HTML  ➜  merged per-team stats
-#   ➜  fantasy scores (DEF/MID/FWD) with original formula
+#   ➜  fantasy scores (DEF/MID/FWD/GK) with original formula
 # ==========================================================
 
 import pandas as pd
@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 # ----------------------------------------------------------
 
 def position_calcul(pos):
-    """Normalize FBref position strings to FWD / MID / DEF."""
+    """Normalize FBref position strings to FWD / MID / DEF / GK."""
     if pd.isna(pos):
         return "MID"
 
@@ -22,6 +22,10 @@ def position_calcul(pos):
         final_pos = pos.split(",")[0].strip()
     else:
         final_pos = pos
+
+    # GK explicit handling
+    if final_pos.upper().startswith("GK"):
+        return "GK"
 
     if final_pos.endswith("W"):
         return "FWD"
@@ -34,7 +38,7 @@ def position_calcul(pos):
 
 
 # ----------------------------------------------------------
-# safe getter for stats
+# safe getters for stats
 # ----------------------------------------------------------
 
 def _get(row: pd.Series, col: str, default: float = 0.0) -> float:
@@ -51,6 +55,19 @@ def _get(row: pd.Series, col: str, default: float = 0.0) -> float:
         return float(val)
     except Exception:
         return default
+
+
+def _get_any(row: pd.Series, candidates, default: float = 0.0) -> float:
+    """
+    Try several possible column names for the same stat (helpful for GK stats
+    where naming can differ). Returns the first non-missing match.
+    """
+    for c in candidates:
+        if c in row.index:
+            v = _get(row, c, default=None)
+            if v is not None:
+                return v
+    return default
 
 
 # ----------------------------------------------------------
@@ -186,6 +203,96 @@ def fwd_score_calc(row: pd.Series) -> float:
 
     if _get(row, "Performance_PKwon") == 1 and _get(row, "Performance_PK") != 1:
         score += 6.4
+
+    return round(score, 0)
+
+
+# ----------------------------------------------------------
+# GK scoring (your spec)
+# ----------------------------------------------------------
+
+def gk_score_calc(row: pd.Series) -> float:
+    """
+    Goalkeeper scoring using your exact specification:
+
+      Minutes:             +0.1 × minutes
+      Clean sheet (>=60m & 0 GA): +12
+      Goals conceded:      5 - 5 × goals_conceded
+      Saves:               +3 × saves
+      Penalties saved:     +15 × pens_saved
+      Penalties conceded:  -5 × pens_conceded
+      Crosses claimed:     +1 × crosses
+      Sweeper actions:     +1.5 × sweeper_actions
+      Error leading shot:  -3 × errors_shot
+      Error leading goal:  -7.5 × errors_goal
+      Yellow card:         -3 × yellow_cards
+      Red card:            -10 × red_cards
+      Own goal:            -5 × own_goals
+
+    A minimum floor of 5 points is enforced.
+    """
+    # Minutes (we map from the same field as outfield players)
+    minutes = _get(row, "Unnamed: 5_level_0_Min", 0)
+
+    # Team goals conceded (we already attach this per team)
+    goals_conceded = _get(row, "goals_conceded", 0)
+
+    # Saves: try a few possible column names
+    saves = _get_any(row, ["Saves", "Save", "SV"], 0)
+
+    # Penalties saved / conceded (names may vary a bit by table)
+    pens_saved = _get_any(row, ["PKsv", "PK Saved", "PK Saves"], 0)
+    pens_conceded = _get_any(row, ["Performance_PKcon", "PKcon", "PK Conceded"], 0)
+
+    # Crosses claimed / punched
+    crosses = _get_any(row, ["Crosses_Stopped", "CrsStp", "Crosses"], 0)
+
+    # Sweeper actions (e.g. outside-box actions)
+    sweeper_actions = _get_any(row, ["Sweeper", "Sweeper_Actions", "#OPA"], 0)
+
+    # Errors: we don't always have shot vs goal separated, so we treat 'Err' as goal-related
+    errors_shot = 0  # if later we get a separate "Err_shot" we can wire it in
+    errors_goal = _get_any(row, ["Unnamed: 21_level_0_Err", "Err"], 0)
+
+    # Cards & own goals (already standardised in your schema)
+    yellow_cards = _get(row, "Performance_CrdY", 0)
+    red_cards = _get(row, "Performance_CrdR", 0)
+    own_goals = _get(row, "Performance_OG", 0)
+
+    score = 0.0
+
+    # Minutes
+    score += 0.1 * minutes
+
+    # Clean sheet bonus
+    if minutes >= 60 and goals_conceded == 0:
+        score += 12
+
+    # Goals conceded term
+    score += 5 - (5 * goals_conceded)
+
+    # Saves
+    score += 3 * saves
+
+    # Penalties
+    score += 15 * pens_saved
+    score += -5 * pens_conceded
+
+    # Crosses & sweeper actions
+    score += 1 * crosses
+    score += 1.5 * sweeper_actions
+
+    # Errors
+    score += -3 * errors_shot
+    score += -7.5 * errors_goal
+
+    # Cards & own goals
+    score += -3 * yellow_cards
+    score += -10 * red_cards
+    score += -5 * own_goals
+
+    # Enforce floor at 5 points (as discussed)
+    score = max(score, 5)
 
     return round(score, 0)
 
@@ -327,7 +434,6 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
     teams = list(team_frames.keys())
 
     # ---- infer goals scored per team from Gls column ----
-    # (we still use this just to keep your original formulas intact)
     if len(teams) >= 1:
         t1 = teams[0]
         df1 = team_frames[t1]
@@ -340,7 +446,6 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
         df2 = team_frames[t2]
         g2 = _get(df2.sum(numeric_only=True), "Performance_Gls", 0)
     else:
-        # single-team case (shouldn't happen for a normal match)
         t2 = None
         df2 = pd.DataFrame()
         g2 = 0
@@ -363,7 +468,6 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
     #  Robust detection of the Position column
     # ------------------------------------------------------
     if "Pos" not in combined_full.columns:
-        # try to find any column whose name suggests "position"
         pos_candidate = None
         for c in combined_full.columns:
             cname = str(c).lower()
@@ -374,11 +478,10 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
         if pos_candidate is not None:
             combined_full = combined_full.rename(columns={pos_candidate: "Pos"})
         else:
-            # absolute last resort – no position found at all
             combined_full["Pos"] = "UNK"
 
     # ------------------------------------------------------
-    #  Now classify into FWD / MID / DEF and compute scores
+    #  Classify into FWD / MID / DEF / GK and compute scores
     # ------------------------------------------------------
     combined_full["pos"] = combined_full["Pos"].apply(position_calcul)
 
@@ -387,14 +490,20 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
             return fwd_score_calc(row)
         elif row["pos"] == "MID":
             return mid_score_calc(row)
-        else:
+        elif row["pos"] == "DEF":
             return def_score_calc(row)
+        elif row["pos"] == "GK":
+            return gk_score_calc(row)
+        else:
+            # fallback – treat unknown like MID
+            return mid_score_calc(row)
 
     combined_full["score"] = combined_full.apply(_apply_score, axis=1)
 
     # Slim result for the UI
     result = combined_full[["Player", "Team", "pos", "score"]].copy()
     return result
+
 
 # ----------------------------------------------------------
 # DEBUGGING HELPER – score breakdown for one player
@@ -433,8 +542,10 @@ def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
         score = fwd_score_calc(row)
     elif pos_bucket == "MID":
         score = mid_score_calc(row)
-    else:
+    elif pos_bucket == "DEF":
         score = def_score_calc(row)
+    else:
+        score = gk_score_calc(row)
 
     data["pos_bucket"] = pos_bucket
     data["final_score"] = score
