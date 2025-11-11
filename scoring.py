@@ -1,7 +1,7 @@
 # scoring.py
 # ==========================================================
 #   FBref match-report HTML  ➜  merged per-team stats
-#   ➜  fantasy scores (DEF/MID/FWD/GK) with original formula
+#   ➜  fantasy scores (DEF/MID/FWD/GK)
 # ==========================================================
 
 import pandas as pd
@@ -71,7 +71,7 @@ def _get_any(row: pd.Series, candidates, default: float = 0.0) -> float:
 
 
 # ----------------------------------------------------------
-# full scoring functions (mirroring your original logic)
+# Outfield scoring functions (unchanged from your logic)
 # ----------------------------------------------------------
 
 def def_score_calc(row: pd.Series) -> float:
@@ -213,7 +213,7 @@ def fwd_score_calc(row: pd.Series) -> float:
 
 def gk_score_calc(row: pd.Series) -> float:
     """
-    Goalkeeper scoring using your exact specification:
+    Goalkeeper scoring using your specification:
 
       Minutes:             +0.1 × minutes
       Clean sheet (>=60m & 0 GA): +12
@@ -223,7 +223,7 @@ def gk_score_calc(row: pd.Series) -> float:
       Penalties conceded:  -5 × pens_conceded
       Crosses claimed:     +1 × crosses
       Sweeper actions:     +1.5 × sweeper_actions
-      Error leading shot:  -3 × errors_shot
+      Error leading shot:  -3 × errors_shot (not currently separate in FBref)
       Error leading goal:  -7.5 × errors_goal
       Yellow card:         -3 × yellow_cards
       Red card:            -10 × red_cards
@@ -231,30 +231,30 @@ def gk_score_calc(row: pd.Series) -> float:
 
     A minimum floor of 5 points is enforced.
     """
-    # Minutes (we map from the same field as outfield players)
+    # Minutes (same field as outfield players)
     minutes = _get(row, "Unnamed: 5_level_0_Min", 0)
 
-    # Team goals conceded (we already attach this per team)
+    # Team goals conceded
     goals_conceded = _get(row, "goals_conceded", 0)
 
-    # Saves: try a few possible column names
+    # Saves from GK table
     saves = _get_any(row, ["Saves", "Save", "SV"], 0)
 
-    # Penalties saved / conceded (names may vary a bit by table)
+    # Penalties saved / conceded
     pens_saved = _get_any(row, ["PKsv", "PK Saved", "PK Saves"], 0)
     pens_conceded = _get_any(row, ["Performance_PKcon", "PKcon", "PK Conceded"], 0)
 
-    # Crosses claimed / punched
-    crosses = _get_any(row, ["Crosses_Stopped", "CrsStp", "Crosses"], 0)
+    # Crosses claimed / stopped
+    crosses = _get_any(row, ["Crosses_Stopped", "Stp"], 0)
 
-    # Sweeper actions (e.g. outside-box actions)
-    sweeper_actions = _get_any(row, ["Sweeper", "Sweeper_Actions", "#OPA"], 0)
+    # Sweeper actions (#OPA)
+    sweeper_actions = _get_any(row, ["#OPA"], 0)
 
-    # Errors: we don't always have shot vs goal separated, so we treat 'Err' as goal-related
-    errors_shot = 0  # if later we get a separate "Err_shot" we can wire it in
+    # Errors – FBref lumps as Err; treat as goal-leading error
+    errors_shot = 0
     errors_goal = _get_any(row, ["Unnamed: 21_level_0_Err", "Err"], 0)
 
-    # Cards & own goals (already standardised in your schema)
+    # Cards & OG
     yellow_cards = _get(row, "Performance_CrdY", 0)
     red_cards = _get(row, "Performance_CrdR", 0)
     own_goals = _get(row, "Performance_OG", 0)
@@ -291,7 +291,7 @@ def gk_score_calc(row: pd.Series) -> float:
     score += -10 * red_cards
     score += -5 * own_goals
 
-    # Enforce floor at 5 points (as discussed)
+    # Minimum floor of 5 points
     score = max(score, 5)
 
     return round(score, 0)
@@ -313,7 +313,10 @@ def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _standardise_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Rename FBref columns to the names used by your original formula."""
+    """
+    Rename FBref columns to the names used by your original formula
+    AND keep important goalkeeper fields.
+    """
     rename_map = {
         # core performance
         "Player": "Player",
@@ -345,16 +348,23 @@ def _standardise_columns(df: pd.DataFrame) -> pd.DataFrame:
         "PKwon": "Performance_PKwon",
         "Err": "Unnamed: 21_level_0_Err",
         "Blocks": "Blocks_Sh",
+        # GK-specific
+        "SoTA": "SoTA",
+        "GA": "GA",
+        "Saves": "Saves",
+        "Opp": "Opp",
+        "Stp": "Crosses_Stopped",
+        "#OPA": "#OPA",
     }
 
-    # only rename columns that exist
+    # only rename columns that actually exist
     rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
     df = df.rename(columns=rename_map)
     return df
 
 
 def _merge_team_tables(team_dfs):
-    """Merge the 6 tables for one team on Player."""
+    """Merge the 6 outfield tables + GK table(s) for one team on Player."""
     merged = None
     for df in team_dfs:
         df = _flatten_columns(df.copy())
@@ -390,6 +400,7 @@ def _merge_team_tables(team_dfs):
 def _extract_team_tables_from_html(html_text: str):
     """
     Returns dict: team_name -> list of DataFrames for that team's tabs.
+    Includes both "Player Stats Table" and "Goalkeeper Stats".
     """
     soup = BeautifulSoup(html_text, "html.parser")
     tables = soup.find_all("table")
@@ -399,10 +410,19 @@ def _extract_team_tables_from_html(html_text: str):
     idx = 0
     for t in tables:
         caption = t.find("caption")
-        if caption and "Player Stats Table" in caption.get_text():
-            team_name = caption.get_text().split(" Player Stats")[0].strip()
-            df = dfs[idx]
-            team_to_dfs.setdefault(team_name, []).append(df)
+        if caption:
+            text = caption.get_text()
+
+            if "Player Stats Table" in text:
+                team_name = text.split(" Player Stats")[0].strip()
+                df = dfs[idx]
+                team_to_dfs.setdefault(team_name, []).append(df)
+
+            elif "Goalkeeper Stats" in text:
+                team_name = text.split(" Goalkeeper Stats")[0].strip()
+                df = dfs[idx]
+                team_to_dfs.setdefault(team_name, []).append(df)
+
         idx += 1
 
     return team_to_dfs
@@ -416,7 +436,7 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
     """
     Main function:
       - Read FBref match-report HTML (already uploaded),
-      - Merge all per-team tables,
+      - Merge all per-team tables (outfield + GK),
       - Compute scores.
     """
     team_tables = _extract_team_tables_from_html(html_text)
@@ -506,7 +526,7 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
 
 
 # ----------------------------------------------------------
-# DEBUGGING HELPER – score breakdown for one player
+# DEBUG HELPER – score breakdown for one player
 # ----------------------------------------------------------
 
 def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
@@ -534,6 +554,8 @@ def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
         "Performance_CrdR", "Performance_PKcon",
         "Performance_PKatt", "Performance_PK",
         "Performance_PKwon", "goals_scored", "goals_conceded",
+        # GK bits
+        "Saves", "Crosses_Stopped", "#OPA",
     ]
 
     data = {stat: _get(row, stat, 0) for stat in stats_used}
