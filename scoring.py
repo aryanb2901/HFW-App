@@ -1,7 +1,8 @@
 # scoring.py
 # ==========================================================
 #   FBref match-report HTML  ➜  merged per-team stats
-#   ➜  fantasy scores (DEF/MID/FWD/GK)
+#   ➜  fantasy scores (DEF/MID/FWD) with original formula
+#   ➜  goalkeeper scoring per latest scheme (image snippet)
 # ==========================================================
 
 import pandas as pd
@@ -18,15 +19,11 @@ def position_calcul(pos):
 
     pos = str(pos).strip()
 
-    if len(pos) > 2:
-        final_pos = pos.split(",")[0].strip()
-    else:
-        final_pos = pos
+    # FBref often lists like "CM,RM" etc.
+    final_pos = pos.split(",")[0].strip() if len(pos) > 2 else pos
 
-    # GK explicit handling
-    if final_pos.upper().startswith("GK"):
+    if final_pos == "GK":
         return "GK"
-
     if final_pos.endswith("W"):
         return "FWD"
     elif final_pos.endswith("M"):
@@ -38,7 +35,7 @@ def position_calcul(pos):
 
 
 # ----------------------------------------------------------
-# safe getters for stats
+# safe getter for stats
 # ----------------------------------------------------------
 
 def _get(row: pd.Series, col: str, default: float = 0.0) -> float:
@@ -57,21 +54,8 @@ def _get(row: pd.Series, col: str, default: float = 0.0) -> float:
         return default
 
 
-def _get_any(row: pd.Series, candidates, default: float = 0.0) -> float:
-    """
-    Try several possible column names for the same stat (helpful for GK stats
-    where naming can differ). Returns the first non-missing match.
-    """
-    for c in candidates:
-        if c in row.index:
-            v = _get(row, c, default=None)
-            if v is not None:
-                return v
-    return default
-
-
 # ----------------------------------------------------------
-# Outfield scoring functions (unchanged from your logic)
+# full scoring functions (original outfield logic)
 # ----------------------------------------------------------
 
 def def_score_calc(row: pd.Series) -> float:
@@ -111,11 +95,9 @@ def def_score_calc(row: pd.Series) -> float:
         - 5 * (_get(row, "Performance_PKatt") - _get(row, "Performance_PK"))
     )
 
-    # PK won but not scored
     if _get(row, "Performance_PKwon") == 1 and _get(row, "Performance_PK") != 1:
         score += 6.4
 
-    # early-sub clean sheet penalty
     if _get(row, "Unnamed: 5_level_0_Min") <= 45 and team_conc == 0:
         score -= 5
 
@@ -208,91 +190,53 @@ def fwd_score_calc(row: pd.Series) -> float:
 
 
 # ----------------------------------------------------------
-# GK scoring (your spec)
+# NEW: Goalkeeper scoring (from your code image)
 # ----------------------------------------------------------
 
 def gk_score_calc(row: pd.Series) -> float:
     """
-    Goalkeeper scoring using your specification:
-
-      Minutes:             +0.1 × minutes
-      Clean sheet (>=60m & 0 GA): +12
-      Goals conceded:      5 - 5 × goals_conceded
-      Saves:               +3 × saves
-      Penalties saved:     +15 × pens_saved
-      Penalties conceded:  -5 × pens_conceded
-      Crosses claimed:     +1 × crosses
-      Sweeper actions:     +1.5 × sweeper_actions
-      Error leading shot:  -3 × errors_shot (not currently separate in FBref)
-      Error leading goal:  -7.5 × errors_goal
-      Yellow card:         -3 × yellow_cards
-      Red card:            -10 × red_cards
-      Own goal:            -5 × own_goals
-
-    A minimum floor of 5 points is enforced.
+    Uses flattened FBref GK columns:
+      - Shot Stopping_GA
+      - Shot Stopping_Saves
+      - Launched_Cmp
+      - Crosses_Stp
+      - Sweeper_#OPA
+    Rule:
+      base 17
+      + 2.5*Saves
+      + 1.5*Launched_Cmp
+      + 1.0*Crosses_Stp
+      + 1.0*#OPA
+      + GA penalty: 0 (GA=0), -5 (GA=1), -5-3*(GA-1) (GA>=2)
+      + clean sheet bonus +2 if GA=0
+    Rounded to nearest integer.
     """
-    # Minutes (same field as outfield players)
-    minutes = _get(row, "Unnamed: 5_level_0_Min", 0)
+    GA = _get(row, "Shot Stopping_GA", 0)
+    Saves = _get(row, "Shot Stopping_Saves", 0)
+    Cmp = _get(row, "Launched_Cmp", 0)
+    Stp = _get(row, "Crosses_Stp", 0)
+    OPA = _get(row, "Sweeper_#OPA", 0)
 
-    # Team goals conceded
-    goals_conceded = _get(row, "goals_conceded", 0)
+    # GA penalty
+    if GA == 0:
+        ga_penalty = 0
+    elif GA == 1:
+        ga_penalty = -5
+    else:
+        ga_penalty = -5 - 3 * (GA - 1)
 
-    # Saves from GK table
-    saves = _get_any(row, ["Saves", "Save", "SV"], 0)
+    score = (
+        17
+        + 2.5 * Saves
+        + 1.5 * Cmp
+        + 1.0 * Stp
+        + 1.0 * OPA
+        + ga_penalty
+    )
 
-    # Penalties saved / conceded
-    pens_saved = _get_any(row, ["PKsv", "PK Saved", "PK Saves"], 0)
-    pens_conceded = _get_any(row, ["Performance_PKcon", "PKcon", "PK Conceded"], 0)
-
-    # Crosses claimed / stopped
-    crosses = _get_any(row, ["Crosses_Stopped", "Stp"], 0)
-
-    # Sweeper actions (#OPA)
-    sweeper_actions = _get_any(row, ["#OPA"], 0)
-
-    # Errors – FBref lumps as Err; treat as goal-leading error
-    errors_shot = 0
-    errors_goal = _get_any(row, ["Unnamed: 21_level_0_Err", "Err"], 0)
-
-    # Cards & OG
-    yellow_cards = _get(row, "Performance_CrdY", 0)
-    red_cards = _get(row, "Performance_CrdR", 0)
-    own_goals = _get(row, "Performance_OG", 0)
-
-    score = 0.0
-
-    # Minutes
-    score += 0.1 * minutes
-
-    # Clean sheet bonus
-    if minutes >= 60 and goals_conceded == 0:
-        score += 12
-
-    # Goals conceded term
-    score += 5 - (5 * goals_conceded)
-
-    # Saves
-    score += 3 * saves
-
-    # Penalties
-    score += 15 * pens_saved
-    score += -5 * pens_conceded
-
-    # Crosses & sweeper actions
-    score += 1 * crosses
-    score += 1.5 * sweeper_actions
-
-    # Errors
-    score += -3 * errors_shot
-    score += -7.5 * errors_goal
-
-    # Cards & own goals
-    score += -3 * yellow_cards
-    score += -10 * red_cards
-    score += -5 * own_goals
-
-    # Minimum floor of 5 points
-    score = max(score, 5)
+    # clean sheet bonus
+    if GA == 0:
+        score += 2
 
     return round(score, 0)
 
@@ -312,11 +256,8 @@ def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _standardise_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Rename FBref columns to the names used by your original formula
-    AND keep important goalkeeper fields.
-    """
+def _standardise_outfield_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename FBref columns to the names used by your original formula (outfield only)."""
     rename_map = {
         # core performance
         "Player": "Player",
@@ -348,23 +289,14 @@ def _standardise_columns(df: pd.DataFrame) -> pd.DataFrame:
         "PKwon": "Performance_PKwon",
         "Err": "Unnamed: 21_level_0_Err",
         "Blocks": "Blocks_Sh",
-        # GK-specific
-        "SoTA": "SoTA",
-        "GA": "GA",
-        "Saves": "Saves",
-        "Opp": "Opp",
-        "Stp": "Crosses_Stopped",
-        "#OPA": "#OPA",
     }
-
-    # only rename columns that actually exist
+    # only rename columns that exist
     rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
-    df = df.rename(columns=rename_map)
-    return df
+    return df.rename(columns=rename_map)
 
 
-def _merge_team_tables(team_dfs):
-    """Merge the 6 outfield tables + GK table(s) for one team on Player."""
+def _merge_team_tables_outfield(team_dfs):
+    """Merge the 6 OUTFIELD tables for one team on Player."""
     merged = None
     for df in team_dfs:
         df = _flatten_columns(df.copy())
@@ -378,8 +310,8 @@ def _merge_team_tables(team_dfs):
         # drop total rows such as "16 Players"
         df = df[~df["Player"].astype(str).str.contains("Players")]
 
-        # standardise column names
-        df = _standardise_columns(df)
+        # standardise column names (outfield)
+        df = _standardise_outfield_columns(df)
 
         if merged is None:
             merged = df
@@ -399,33 +331,43 @@ def _merge_team_tables(team_dfs):
 
 def _extract_team_tables_from_html(html_text: str):
     """
-    Returns dict: team_name -> list of DataFrames for that team's tabs.
-    Includes both "Player Stats Table" and "Goalkeeper Stats".
+    Returns:
+      - of_map: dict(team_name -> list of DataFrames for that team's OUTFIELD tabs)
+      - gk_map: dict(team_name -> list of GK DataFrames (usually 1 row))
     """
     soup = BeautifulSoup(html_text, "html.parser")
     tables = soup.find_all("table")
-    dfs = pd.read_html(html_text)
+    all_dfs = pd.read_html(html_text)
 
-    team_to_dfs = {}
+    of_map = {}
+    gk_map = {}
+
     idx = 0
     for t in tables:
         caption = t.find("caption")
-        if caption:
-            text = caption.get_text()
+        cap = caption.get_text().strip() if caption else ""
+        is_outfield = "Player Stats Table" in cap
+        is_goalkeeper = ("Goalkeeper Stats" in cap) or ("Goalkeeping" in cap)
 
-            if "Player Stats Table" in text:
-                team_name = text.split(" Player Stats")[0].strip()
-                df = dfs[idx]
-                team_to_dfs.setdefault(team_name, []).append(df)
+        # team name is the caption prefix before the descriptor
+        team_name = None
+        if is_outfield:
+            team_name = cap.split(" Player Stats")[0].strip()
+        elif is_goalkeeper:
+            team_name = cap.split(" Goalkeeper Stats")[0].strip()
+            if team_name == cap:  # fallback if caption format differs
+                team_name = cap.split(" Goalkeeping")[0].strip()
 
-            elif "Goalkeeper Stats" in text:
-                team_name = text.split(" Goalkeeper Stats")[0].strip()
-                df = dfs[idx]
-                team_to_dfs.setdefault(team_name, []).append(df)
+        if team_name:
+            df = all_dfs[idx]
+            if is_outfield:
+                of_map.setdefault(team_name, []).append(df)
+            elif is_goalkeeper:
+                gk_map.setdefault(team_name, []).append(df)
 
         idx += 1
 
-    return team_to_dfs
+    return of_map, gk_map
 
 
 # ----------------------------------------------------------
@@ -436,38 +378,66 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
     """
     Main function:
       - Read FBref match-report HTML (already uploaded),
-      - Merge all per-team tables (outfield + GK),
-      - Compute scores.
+      - Merge all per-team OUTFIELD tables,
+      - Attach GK table rows (Pos='GK'),
+      - Compute scores (outfield + GK).
     """
-    team_tables = _extract_team_tables_from_html(html_text)
-    if len(team_tables) == 0:
-        raise ValueError("No team player stats tables found in the HTML.")
+    of_map, gk_map = _extract_team_tables_from_html(html_text)
+    if len(of_map) == 0 and len(gk_map) == 0:
+        raise ValueError("No team player or goalkeeper tables found in the HTML.")
 
-    # Build merged table for each team
+    # Build merged table for each team (outfield)
     team_frames = {}
-    for team, dfs in team_tables.items():
-        team_frames[team] = _merge_team_tables(dfs)
+    for team, dfs in of_map.items():
+        team_frames[team] = _merge_team_tables_outfield(dfs)
+
+    # Append GK rows (keep as their own rows, Pos='GK')
+    for team, gk_dfs in gk_map.items():
+        # concatenate all GK rows for that team (typically 1)
+        gk_rows = []
+        for gk_df in gk_dfs:
+            df = _flatten_columns(gk_df.copy())
+            player_col = next((c for c in df.columns if "player" in c.lower()), None)
+            if not player_col:
+                continue
+            df = df.rename(columns={player_col: "Player"})
+            df = df[~df["Player"].astype(str).str.contains("Players")]
+            df["Pos"] = "GK"
+            gk_rows.append(df)
+        if gk_rows:
+            gk_block = pd.concat(gk_rows, ignore_index=True)
+            if team in team_frames and not team_frames[team].empty:
+                team_frames[team] = pd.concat([team_frames[team], gk_block], ignore_index=True)
+            else:
+                # Team with only GK table (edge case)
+                team_frames[team] = gk_block
 
     if len(team_frames) == 0:
         raise ValueError("Could not create any team dataframes from HTML.")
 
     teams = list(team_frames.keys())
 
-    # ---- infer goals scored per team from Gls column ----
+    # ---- infer goals scored per team from outfield Gls (keeps original formulas intact) ----
+    def _team_goals(df):
+        if df is None or df.empty:
+            return 0
+        # outfield merged has 'Performance_Gls' after standardization
+        return _get(df.sum(numeric_only=True), "Performance_Gls", 0)
+
     if len(teams) >= 1:
         t1 = teams[0]
-        df1 = team_frames[t1]
-        g1 = _get(df1.sum(numeric_only=True), "Performance_Gls", 0)
+        # split GK vs outfield to compute goals from outfield only
+        df1_out = team_frames[t1][team_frames[t1].get("Pos", "").ne("GK")]
+        g1 = _team_goals(df1_out)
     else:
         raise ValueError("No first team data found.")
 
     if len(teams) >= 2:
         t2 = teams[1]
-        df2 = team_frames[t2]
-        g2 = _get(df2.sum(numeric_only=True), "Performance_Gls", 0)
+        df2_out = team_frames[t2][team_frames[t2].get("Pos", "").ne("GK")]
+        g2 = _team_goals(df2_out)
     else:
         t2 = None
-        df2 = pd.DataFrame()
         g2 = 0
 
     # attach goals_scored / goals_conceded and team label
@@ -476,7 +446,7 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
         team_frames[t1]["goals_conceded"] = g2
         team_frames[t1]["Team"] = "Home"
 
-    if len(teams) >= 2:
+    if t2 is not None:
         team_frames[t2]["goals_scored"] = g2
         team_frames[t2]["goals_conceded"] = g1
         team_frames[t2]["Team"] = "Away"
@@ -485,7 +455,7 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
     combined_full = pd.concat(team_frames.values(), ignore_index=True)
 
     # ------------------------------------------------------
-    #  Robust detection of the Position column
+    #  Robust detection/normalization of the Position column
     # ------------------------------------------------------
     if "Pos" not in combined_full.columns:
         pos_candidate = None
@@ -494,29 +464,26 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
             if "pos" in cname and "xg" not in cname and "pass" not in cname:
                 pos_candidate = c
                 break
-
         if pos_candidate is not None:
             combined_full = combined_full.rename(columns={pos_candidate: "Pos"})
         else:
             combined_full["Pos"] = "UNK"
 
     # ------------------------------------------------------
-    #  Classify into FWD / MID / DEF / GK and compute scores
+    #  Classify and compute scores
     # ------------------------------------------------------
     combined_full["pos"] = combined_full["Pos"].apply(position_calcul)
 
     def _apply_score(row):
-        if row["pos"] == "FWD":
-            return fwd_score_calc(row)
-        elif row["pos"] == "MID":
-            return mid_score_calc(row)
-        elif row["pos"] == "DEF":
-            return def_score_calc(row)
-        elif row["pos"] == "GK":
+        bucket = row["pos"]
+        if bucket == "GK":
             return gk_score_calc(row)
-        else:
-            # fallback – treat unknown like MID
+        elif bucket == "FWD":
+            return fwd_score_calc(row)
+        elif bucket == "MID":
             return mid_score_calc(row)
+        else:
+            return def_score_calc(row)
 
     combined_full["score"] = combined_full.apply(_apply_score, axis=1)
 
@@ -526,12 +493,12 @@ def calc_all_players_from_html(html_text: str) -> pd.DataFrame:
 
 
 # ----------------------------------------------------------
-# DEBUG HELPER – score breakdown for one player
+# DEBUGGING HELPER – score breakdown for one player (outfield)
 # ----------------------------------------------------------
 
 def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
     """
-    Return a dict of the stats used in scoring for a given player,
+    Return a dict of the stats used in scoring for a given player (outfield),
     plus their position bucket and final score.
     """
     row = full_df[full_df["Player"] == player_name]
@@ -540,6 +507,19 @@ def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
     row = row.iloc[0]
 
     pos_bucket = position_calcul(row.get("Pos", "MID"))
+
+    if pos_bucket == "GK":
+        # GK breakdown is simpler; return the inputs we use.
+        data = {
+            "Shot Stopping_GA": _get(row, "Shot Stopping_GA", 0),
+            "Shot Stopping_Saves": _get(row, "Shot Stopping_Saves", 0),
+            "Launched_Cmp": _get(row, "Launched_Cmp", 0),
+            "Crosses_Stp": _get(row, "Crosses_Stp", 0),
+            "Sweeper_#OPA": _get(row, "Sweeper_#OPA", 0),
+        }
+        data["pos_bucket"] = "GK"
+        data["final_score"] = gk_score_calc(row)
+        return data
 
     stats_used = [
         "Aerial Duels_Won", "Aerial Duels_Lost",
@@ -554,8 +534,6 @@ def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
         "Performance_CrdR", "Performance_PKcon",
         "Performance_PKatt", "Performance_PK",
         "Performance_PKwon", "goals_scored", "goals_conceded",
-        # GK bits
-        "Saves", "Crosses_Stopped", "#OPA",
     ]
 
     data = {stat: _get(row, stat, 0) for stat in stats_used}
@@ -564,10 +542,8 @@ def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
         score = fwd_score_calc(row)
     elif pos_bucket == "MID":
         score = mid_score_calc(row)
-    elif pos_bucket == "DEF":
-        score = def_score_calc(row)
     else:
-        score = gk_score_calc(row)
+        score = def_score_calc(row)
 
     data["pos_bucket"] = pos_bucket
     data["final_score"] = score
