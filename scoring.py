@@ -222,7 +222,6 @@ def gk_score_calc(row: pd.Series) -> float:
     # Goal concession penalty
     if GA == 0:
         ga_penalty = 0
-        clean_sheet = 2
     elif GA == 1:
         ga_penalty = -5
     else:
@@ -232,13 +231,14 @@ def gk_score_calc(row: pd.Series) -> float:
     score = (
         17
         + 2.5 * Saves   # shot-stopping reward
-        + 1.0 * Cmp     # long passes completed
+        + 0.5 * Cmp     # long passes completed
         + 1.0 * Stp     # crosses stopped
         + 1.0 * OPA     # sweeper actions
         + ga_penalty    # goals conceded penalty
-        + clean_sheet
     )
-
+    if GA == 0:
+        score += 2
+        
     return round(score, 0)
 
 
