@@ -223,7 +223,7 @@ def gk_score_calc(row: pd.Series) -> float:
     elif GA == 1:
         ga_penalty = -5
     else:
-        ga_penalty = -5 - 3 * (GA - 1)
+        ga_penalty = -5 - (3 * (GA - 1))
 
     score = (
         17
