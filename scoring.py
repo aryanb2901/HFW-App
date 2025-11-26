@@ -30,8 +30,6 @@ def position_calcul(pos):
         return "MID"
     elif final_pos.endswith("B"):
         return "DEF"
-    else:
-        return "MID"
 
 
 # ----------------------------------------------------------
