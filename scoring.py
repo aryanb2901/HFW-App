@@ -34,7 +34,7 @@ def position_calcul(pos):
     elif final_pos.endswith("B"):
         return "DEF"
     else:
-        return "MID"
+        return "UNK"
 
 
 # ----------------------------------------------------------
@@ -411,18 +411,32 @@ def _extract_gk_tables_from_html(html_text: str):
             # drop totals
             df = df[~df["Player"].astype(str).str.contains("Players")]
 
-            # standardise a few key GK columns
+            # ---- key part: handle flattened multiindex names ----
             rename_map = {
+                # minutes
                 "Min": "Unnamed: 5_level_0_Min",
+
+                # goals against & saves come under "Shot Stopping"
+                "Shot Stopping_GA": "GA",
                 "GA": "GA",
+                "Shot Stopping_Saves": "Saves",
                 "Saves": "Saves",
+
+                # crosses stopped under "Crosses"
+                "Crosses_Stp": "Crosses_Stopped",
                 "Stp": "Crosses_Stopped",
+
+                # sweeper actions under "Sweeper"
+                "Sweeper_#OPA": "#OPA",
                 "#OPA": "#OPA",
+
+                # cards / OG / errors if they ever appear here
                 "CrdY": "Performance_CrdY",
                 "CrdR": "Performance_CrdR",
                 "OG": "Performance_OG",
                 "Err": "Unnamed: 21_level_0_Err",
             }
+
             rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
             df = df.rename(columns=rename_map)
 
@@ -431,7 +445,6 @@ def _extract_gk_tables_from_html(html_text: str):
         idx += 1
 
     return team_to_gk_df
-
 
 # ----------------------------------------------------------
 # MAIN ENTRY POINT used by Streamlit
