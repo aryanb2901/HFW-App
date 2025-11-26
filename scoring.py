@@ -231,12 +231,14 @@ def gk_score_calc(row: pd.Series) -> float:
     minutes = _get(row, "Unnamed: 5_level_0_Min", 0)
     goals_conceded = _get(row, "goals_conceded", 0)
 
-    saves = _get_any(row, ["Saves"], 0)
+    saves = _get_any(row, ["Saves", "Shot Stopping_Saves"], 0)
+
     pens_saved = _get_any(row, ["PKsv", "PK Saved", "PK Saves"], 0)
     pens_conceded = _get_any(row, ["Performance_PKcon", "PKcon", "PK Conceded"], 0)
 
-    crosses = _get_any(row, ["Crosses_Stopped", "Stp"], 0)
-    sweeper_actions = _get_any(row, ["#OPA"], 0)
+    crosses = _get_any(row, ["Crosses_Stopped", "Crosses_Stp", "Stp"], 0)
+
+    sweeper_actions = _get_any(row, ["#OPA", "Sweeper_#OPA"], 0)
 
     errors_shot = 0
     errors_goal = _get_any(row, ["Unnamed: 21_level_0_Err", "Err"], 0)
