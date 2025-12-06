@@ -481,6 +481,7 @@ def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
 
     pos_bucket = position_calcul(row.get("Pos", "MID"))
 
+    # All stats your formulas actually use
     stats_used = [
         "Aerial Duels_Won", "Aerial Duels_Lost",
         "Performance_Tkl", "Challenges_Lost", "Performance_Int",
@@ -494,9 +495,6 @@ def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
         "Performance_CrdR", "Performance_PKcon",
         "Performance_PKatt", "Performance_PK",
         "Performance_PKwon", "goals_scored", "goals_conceded",
-        # GK bits
-        "Shot Stopping_GA", "Shot Stopping_Saves",
-        "Launched_Cmp", "Crosses_Stp", "Sweeper_#OPA",
     ]
 
     data = {stat: _get(row, stat, 0) for stat in stats_used}
@@ -505,10 +503,8 @@ def debug_player_components(full_df: pd.DataFrame, player_name: str) -> dict:
         score = fwd_score_calc(row)
     elif pos_bucket == "MID":
         score = mid_score_calc(row)
-    elif pos_bucket == "DEF":
+    else:  # DEF is the case for Inácio
         score = def_score_calc(row)
-    else:
-        score = gk_score_calc(row)
 
     data["pos_bucket"] = pos_bucket
     data["final_score"] = score
